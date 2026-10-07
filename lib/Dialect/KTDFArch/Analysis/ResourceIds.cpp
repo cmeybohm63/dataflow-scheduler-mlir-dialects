@@ -60,6 +60,17 @@ auto ResourceIds::assign(Resource resource, StringAttr id) -> bool {
   }
 
   updateImpl(resource, id);
+  // Can't override an identifier that is already in use by someone else.
+  if (const auto existing = map_.lookup(id); existing) {
+    return Resource(existing) == resource;
+  }
+
+  // Remove the old mapping and attach the new identifier.
+  if (const auto id_attr = resource.getIdAttr(); id_attr) {
+    map_.erase(id_attr);
+  }
+  resource.setIdAttr(id);
+  map_[id] = resource;
   return true;
 }
 
@@ -67,6 +78,23 @@ auto ResourceIds::assign(Resource resource, StringRef prefix) -> StringAttr {
   // We can only assign identifiers to resources owned by our device.
   if (!getDevice() || !getDevice().getDefinition()->isAncestor(resource)) {
     return nullptr;
+  // Come up with a prefix for the name.
+  llvm::SmallString<32> id(prefix);
+  const auto prefix_len = id.size();
+
+  // Make the id unique by counting up an index (but don't include 0).
+  StringAttr id_attr;
+  std::size_t index = 0;
+  while (true) {
+    id_attr = StringAttr::get(resource->getContext(), id);
+    const auto existing = map_.lookup(id_attr);
+    if (!existing || Resource(existing) == resource) {
+      break;
+    }
+
+    id.resize(prefix_len);
+    id += '_';
+    id += std::to_string(++index);
   }
 
   llvm::sys::SmartScopedLock<true> lock(mutex_);
